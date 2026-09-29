@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatQuota, interpreterFor, probeQuota } from '../quota.mjs'
+import { formatQuota, interpreterFor, probeQuota, resetIn } from '../quota.mjs'
 
 test('the Hermes venv interpreter wins over HERMES_PYTHON, and clears PYTHONPATH', () => {
   // The TUI exports HERMES_PYTHON as the bare tool interpreter, which has no
@@ -37,27 +37,43 @@ test('a missing interpreter is reported as such, not as a generic failure', asyn
 
 const data = (windows) => ({ providers: [{ id: 'openai-codex', accounts: [{ fp: 'a', windows }] }] })
 
-test('probe pct is USED percent, so the line reports what is LEFT', () => {
-  const line = formatQuota(data([{ k: 'session (5h)', pct: 91 }, { k: 'weekly', pct: 63 }]), 'openai-codex')
-  assert.equal(line, 'Codex · 5h 9% left · week 37% left')
+const T = Date.now()
+const iso = ms => new Date(ms).toISOString()
+const min = m => m * 60_000
+const hours = n => n * 3_600_000
+
+test('reset countdowns read as minutes, hours, days, now, or —', () => {
+  assert.equal(resetIn(iso(T + min(16)), T), '16m')
+  assert.equal(resetIn(iso(T + hours(2) + min(15)), T), '2h 15m')
+  assert.equal(resetIn(iso(T + hours(24 * 3 + 5)), T), '3d 5h')
+  assert.equal(resetIn(iso(T - min(1)), T), 'now')
+  assert.equal(resetIn(null, T), '—')
+})
+
+test('probe pct is USED percent, so the line reports what is LEFT — with resets', () => {
+  const line = formatQuota(data([
+    { k: 'session (5h)', pct: 91, reset: iso(T + hours(2) + min(15)) },
+    { k: 'weekly', pct: 63, reset: iso(T + hours(24 * 3 + 5)) }
+  ]), 'openai-codex', T)
+  assert.equal(line, 'Codex · 5h 9% left · reset 2h 15m · week 37% left · reset 3d 5h')
 })
 
 test('a full window reads 0% left, never a negative', () => {
-  const line = formatQuota(data([{ k: 'session (5h)', pct: 104 }, { k: 'weekly', pct: 100 }]), 'openai-codex')
-  assert.equal(line, 'Codex · 5h 0% left · week 0% left')
+  const line = formatQuota(data([{ k: 'session (5h)', pct: 104 }, { k: 'weekly', pct: 100 }]), 'openai-codex', T)
+  assert.equal(line, 'Codex · 5h 0% left · reset — · week 0% left · reset —')
 })
 
 test('missing window data stays unknown instead of a fake 0%', () => {
-  const line = formatQuota(data([{ k: 'weekly', pct: 10 }]), 'openai-codex')
-  assert.equal(line, 'Codex · 5h — left · week 90% left')
+  const line = formatQuota(data([{ k: 'weekly', pct: 10, reset: iso(T + hours(4)) }]), 'openai-codex', T)
+  assert.equal(line, 'Codex · 5h — left · reset — · week 90% left · reset 4h')
 })
 
-test('the most constrained account wins across a pool', () => {
+test('the most constrained account wins across a pool, countdown included', () => {
   const line = formatQuota({ providers: [{ id: 'openai-codex', accounts: [
-    { fp: 'a', windows: [{ k: 'session (5h)', pct: 10 }] },
-    { fp: 'b', windows: [{ k: 'session (5h)', pct: 80 }] }
-  ] }] }, 'openai-codex')
-  assert.equal(line, 'Codex · 5h 20% left · week — left')
+    { fp: 'a', windows: [{ k: 'session (5h)', pct: 10, reset: iso(T + min(10)) }] },
+    { fp: 'b', windows: [{ k: 'session (5h)', pct: 80, reset: iso(T + hours(1)) }] }
+  ] }] }, 'openai-codex', T)
+  assert.equal(line, 'Codex · 5h 20% left · reset 1h · week — left · reset —')
 })
 
 test('unconfigured and errored providers are named, not rendered as zero', () => {
@@ -69,4 +85,31 @@ test('unconfigured and errored providers are named, not rendered as zero', () =>
 
 test('an unknown provider id is still named', () => {
   assert.equal(formatQuota({ providers: [] }, 'brand-new'), 'brand-new · not configured')
+})
+
+test('register auto-docks on launch once per process, and rescans never re-dock', async () => {
+  const key = '__hermesQuotaWidgetAutoOpened'
+  const url = new URL('../quota.mjs', import.meta.url)
+  const opened = []
+  const mockSdk = {
+    defineWidgetApp: def => ({ ...def }),
+    h: () => null,
+    Text: () => null,
+    React: { useEffect: () => {} },
+    openWidget: app => opened.push(app.id),
+    updateWidget: () => {},
+    useSessionProvider: () => null
+  }
+  const register = async tag => (await import(`${url.href}?t=${tag}`)).default
+
+  delete globalThis[key]
+  await (await register('boot'))(mockSdk)
+  assert.deepEqual(opened, ['quota'], 'the launch scan docks the line exactly once')
+
+  await (await register('rescan'))(mockSdk)
+  assert.deepEqual(opened, ['quota'], 'a rescan must not undo a /quota close')
+
+  delete globalThis[key]
+  await (await register('relaunch'))(mockSdk)
+  assert.deepEqual(opened, ['quota', 'quota'], 'the next TUI launch docks again')
 })

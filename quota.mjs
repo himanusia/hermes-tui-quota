@@ -30,7 +30,20 @@ export function interpreterFor(env = process.env, has = existsSync) {
   return { cleanPythonPath: false, cmd: env.HERMES_PYTHON || 'python3' }
 }
 
-export function formatQuota(data, providerId) {
+/** Countdown to an ISO reset instant: 16m, 2h 15m, 3d 5h, now, —. */
+export function resetIn(iso, now = Date.now()) {
+  const at = iso ? new Date(iso).getTime() : NaN
+  if (!Number.isFinite(at)) return '—'
+  const minutes = Math.ceil((at - now) / 60_000)
+  if (minutes <= 0) return 'now'
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`
+  const days = Math.floor(hours / 24)
+  return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`
+}
+
+export function formatQuota(data, providerId, now = Date.now()) {
   const name = providers[providerId] || providerId || 'Unknown provider'
   const accounts = data.providers?.find(row => row.id === providerId)?.accounts || []
   if (!accounts.length) return `${name} · not configured`
@@ -38,12 +51,17 @@ export function formatQuota(data, providerId) {
   const valid = [...new Map(accounts.map(row => [row.acct || row.fp, row])).values()]
     .filter(row => !row.error && Array.isArray(row.windows) && row.windows.length)
   if (!valid.length) return `${name} · no quota window`
+  // Highest used pct across accounts is the binding window; its reset is when
+  // the shown remaining quota comes back.
+  const windowAt = label => valid.flatMap(row => row.windows.filter(w => label.test(w.k)))
+    .filter(w => Number.isFinite(Number(w.pct)))
+    .reduce((a, b) => (!a || Number(b.pct) > Number(a.pct) ? b : a), null)
   const remaining = label => {
-    const used = valid.flatMap(row => row.windows.filter(w => label.test(w.k)).map(w => Number(w.pct)))
-      .filter(Number.isFinite)
-    return used.length ? `${Math.max(0, Math.min(100, 100 - Math.max(...used))).toFixed(0)}%` : '—'
+    const w = windowAt(label)
+    return w ? `${Math.max(0, Math.min(100, 100 - Number(w.pct))).toFixed(0)}%` : '—'
   }
-  return `${name} · 5h ${remaining(/5h|session/i)} left · week ${remaining(/week/i)} left`
+  const reset = label => resetIn(windowAt(label)?.reset, now)
+  return `${name} · 5h ${remaining(/5h|session/i)} left · reset ${reset(/5h|session/i)} · week ${remaining(/week/i)} left · reset ${reset(/week/i)}`
 }
 
 /** Rejects with a short reason that is safe to put on the status line. */
@@ -105,4 +123,14 @@ export default function register(sdk) {
     reduce: state => state,
     render: ({ state, t }) => h(Body, { state, t })
   })
+  // Auto-dock on TUI launch, once per process. register() re-runs on EVERY
+  // widget-dir rescan (any .mjs save, /widgets-reload), so a plain
+  // sdk.openWidget(...) would re-dock the card after a /quota close and the
+  // off state could not survive a reload. The globalThis flag keeps the
+  // launch dock while a close lasts for the rest of the session; the next
+  // TUI launch auto-docks again. /quota stays the manual toggle.
+  if (!globalThis.__hermesQuotaWidgetAutoOpened) {
+    sdk.openWidget(app, app.init(''))
+    globalThis.__hermesQuotaWidgetAutoOpened = true
+  }
 }

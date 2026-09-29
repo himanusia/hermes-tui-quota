@@ -3,7 +3,7 @@
 A single plain-text line in the Hermes TUI showing how much quota is **left** on the provider the current chat actually runs on.
 
 ```
-Codex · 5h 9% left · week 37% left
+Codex · 5h 9% left · reset 2h 15m · week 37% left · reset 2d 20h
 ```
 
 No border, no panel — it sits in the composer dock directly above the `Ready · model` rule, which sits above the input.
@@ -39,11 +39,15 @@ It shells out to the read-only probe shipped with the [Hermes Provider Quota Das
 
 The probe's `pct` is **used**, not remaining. This widget displays `100 - pct` and says `left`, so the number means what it looks like. Missing windows stay `—` and are never turned into a fake `0%`.
 
+### Resets
+
+Each window carries a countdown to its next reset: `reset 16m`, `reset 2h 15m`, `reset 3d 5h`. A reset that has passed reads `reset now`, and a window without reset data stays `reset —`. The countdown follows the same most-constrained account as the percentage and recomputes on every refresh (60 s).
+
 ## Install
 
 1. Copy `quota.mjs` to `~/.hermes/tui-widgets/quota.mjs`.
 2. Apply the two patches below to your Hermes checkout and rebuild the TUI (`npm run build` in `ui-tui`), then restart the TUI.
-3. `/quota` toggles the line. It is not auto-opened, so it stays off until you ask for it.
+3. The line docks itself when the TUI launches (once per process); `/quota` closes it or brings it back. A closed line stays closed for the rest of that TUI session, and the next launch docks it again.
 4. `/widgets-reload` picks up edits to the widget file without a restart.
 
 Requires `probe.py` at `~/.hermes/desktop-plugins/quota-dash/probe.py`; override the path with `HERMES_QUOTA_PROBE`.
@@ -72,7 +76,7 @@ A probe that fails says why, in one short word, instead of hiding behind a gener
 node --test test/widget.test.mjs
 ```
 
-Covers the used→remaining inversion, clamping, pooled accounts taking the most constrained value, and the not-configured/unavailable/unknown-provider labels.
+Covers the used→remaining inversion, clamping, pooled accounts taking the most constrained value, reset countdowns, auto-dock (one dock per launch; rescans never re-dock), and the not-configured/unavailable/unknown-provider labels.
 
 ## Limits
 

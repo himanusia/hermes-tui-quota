@@ -31,7 +31,7 @@ cd ui-tui && npm run build
 - `0001` — the SDK hook, with its test.
 - `0002` — `dock-top` renders **above** the `Ready · model` rule instead of below it. Without it the line lands between the rule and the prompt, under the header it is supposed to accompany.
 
-These travel as patch files rather than a branch because a Hermes fork here has a truncated history — pushing the 38k-commit ancestry is not viable, while a handful of lines is.
+The same two changes also live as the branch `feat/quota-widget-provider` on the fork — `git fetch https://github.com/himanusia/hermes-agent feat/quota-widget-provider` and merge it in — for when fetching a branch beats applying patches.
 
 ## How it reads the quota
 

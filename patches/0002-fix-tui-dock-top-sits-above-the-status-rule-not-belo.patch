@@ -1,0 +1,61 @@
+From 4cf3b0951aec0576c5e881094504d8b6f2a76fbc Mon Sep 17 00:00:00 2001
+From: himanusia <19623185@std.stei.itb.ac.id>
+Date: Tue, 29 Sep 2026 11:38:14 +0700
+Subject: [PATCH 2/2] fix(tui): dock-top sits above the status rule, not below
+ it
+
+An ambient dock-top widget rendered between the Ready/model rule and the
+composer, so a widget meant to read as a header line for that rule appeared
+underneath it. Render the dock first and keep the doc comments in step with
+the new order.
+---
+ ui-tui/src/components/appLayout.tsx | 2 +-
+ ui-tui/src/sdk/host.tsx             | 4 ++--
+ ui-tui/src/sdk/types.ts             | 2 +-
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/ui-tui/src/components/appLayout.tsx b/ui-tui/src/components/appLayout.tsx
+index bc65d45faaa..786bfd747c2 100644
+--- a/ui-tui/src/components/appLayout.tsx
++++ b/ui-tui/src/components/appLayout.tsx
+@@ -406,8 +406,8 @@ const ComposerPane = memo(function ComposerPane({
+ 
+       <GoalBar cols={Math.max(1, composer.cols - 2)} />
+       <LiveAgentsPanel cols={Math.max(1, composer.cols - 2)} />
+-      <StatusRulePane at="top" composer={composer} nativeMode={nativeMode} status={status} />
+       <AmbientDock placement="dock-top" />
++      <StatusRulePane at="top" composer={composer} nativeMode={nativeMode} status={status} />
+ 
+       <Box
+         flexDirection="column"
+diff --git a/ui-tui/src/sdk/host.tsx b/ui-tui/src/sdk/host.tsx
+index 6fdee561166..c23684cd41e 100644
+--- a/ui-tui/src/sdk/host.tsx
++++ b/ui-tui/src/sdk/host.tsx
+@@ -217,8 +217,8 @@ export function ActiveWidgetSlot(): ReactNode {
+ }
+ 
+ /** An in-FLOW dock row: reserves real rows in the chrome (never covers
+- *  content), right-aligned cards. `dock-top` renders under the top status
+- *  bar, `dock-bottom` above the bottom one. */
++ *  content), right-aligned cards. `dock-top` renders above the top status
++ *  rule, `dock-bottom` above the bottom one. */
+ export function AmbientDock({ placement }: { placement: 'dock-bottom' | 'dock-top' }): ReactNode {
+   const overlay = useStore($overlayState)
+   const ctx = useRenderCtx()
+diff --git a/ui-tui/src/sdk/types.ts b/ui-tui/src/sdk/types.ts
+index f5ffe90b822..90a104f555e 100644
+--- a/ui-tui/src/sdk/types.ts
++++ b/ui-tui/src/sdk/types.ts
+@@ -58,7 +58,7 @@ export interface WidgetApp<S = unknown> {
+  * Where an ambient widget lives. Two placement families:
+  *
+  * DOCKS are in-FLOW chrome rows (they reserve real rows, never cover
+- * content): `dock-top` under the top status bar, `dock-bottom` above the
++ * content): `dock-top` above the top status rule, `dock-bottom` above the
+  * bottom one. Each dock is a right-aligned row of cards.
+  *
+  * FLOATS overlay the transcript margins without reserving layout
+-- 
+2.54.0 (Apple Git-157)
+

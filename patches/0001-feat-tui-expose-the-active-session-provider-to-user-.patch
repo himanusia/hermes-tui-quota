@@ -1,7 +1,8 @@
 From 45a89cde97c99d1b893723957e0ad9aa0b375596 Mon Sep 17 00:00:00 2001
 From: himanusia <19623185@std.stei.itb.ac.id>
 Date: Tue, 29 Sep 2026 11:19:35 +0700
-Subject: [PATCH] feat(tui): expose the active session provider to user widgets
+Subject: [PATCH 1/2] feat(tui): expose the active session provider to user
+ widgets
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

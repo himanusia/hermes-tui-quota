@@ -6,7 +6,7 @@ A single plain-text line in the Hermes TUI showing how much quota is **left** on
 Codex · 5h 9% left · week 37% left
 ```
 
-No border, no panel — it sits in the composer dock above the input, next to the `Ready · model` rule.
+No border, no panel — it sits in the composer dock directly above the `Ready · model` rule, which sits above the input.
 
 ## How it reads the provider
 
@@ -21,14 +21,17 @@ useSessionProvider: () => useStore($uiState).info?.provider ?? null,
 
 Without it the widget renders `Quota · needs Hermes SDK hook` instead of a wrong number.
 
-`patches/0001-tui-sdk-expose-session-provider.patch` carries that hook as a one-commit patch (with its test). Apply it in a Hermes checkout, then rebuild:
+`patches/` carries the two Hermes-side changes as commit patches. Apply them in a Hermes checkout, then rebuild:
 
 ```
-git am patches/0001-tui-sdk-expose-session-provider.patch
+git am patches/*.patch
 cd ui-tui && npm run build
 ```
 
-It is a patch file rather than a branch because a Hermes fork here has a truncated history — pushing the 38k-commit ancestry is not viable, while a 4-line change is.
+- `0001` — the SDK hook, with its test.
+- `0002` — `dock-top` renders **above** the `Ready · model` rule instead of below it. Without it the line lands between the rule and the prompt, under the header it is supposed to accompany.
+
+These travel as patch files rather than a branch because a Hermes fork here has a truncated history — pushing the 38k-commit ancestry is not viable, while a handful of lines is.
 
 ## How it reads the quota
 
@@ -39,7 +42,7 @@ The probe's `pct` is **used**, not remaining. This widget displays `100 - pct` a
 ## Install
 
 1. Copy `quota.mjs` to `~/.hermes/tui-widgets/quota.mjs`.
-2. Add the SDK hook above to your Hermes checkout and rebuild the TUI (`npm run build` in `ui-tui`), then restart the TUI.
+2. Apply the two patches below to your Hermes checkout and rebuild the TUI (`npm run build` in `ui-tui`), then restart the TUI.
 3. `/quota` toggles the line. It is not auto-opened, so it stays off until you ask for it.
 4. `/widgets-reload` picks up edits to the widget file without a restart.
 

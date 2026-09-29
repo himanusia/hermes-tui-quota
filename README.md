@@ -21,6 +21,15 @@ useSessionProvider: () => useStore($uiState).info?.provider ?? null,
 
 Without it the widget renders `Quota · needs Hermes SDK hook` instead of a wrong number.
 
+`patches/0001-tui-sdk-expose-session-provider.patch` carries that hook as a one-commit patch (with its test). Apply it in a Hermes checkout, then rebuild:
+
+```
+git am patches/0001-tui-sdk-expose-session-provider.patch
+cd ui-tui && npm run build
+```
+
+It is a patch file rather than a branch because a Hermes fork here has a truncated history — pushing the 38k-commit ancestry is not viable, while a 4-line change is.
+
 ## How it reads the quota
 
 It shells out to the read-only probe shipped with the [Hermes Provider Quota Dashboard](https://github.com/himanusia/hermes-provider-quota-dashboard) — the same file the desktop pane uses. This repository holds no credentials; the probe reads the local credential pool itself and prints one JSON line.

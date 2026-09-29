@@ -1,0 +1,83 @@
+From 45a89cde97c99d1b893723957e0ad9aa0b375596 Mon Sep 17 00:00:00 2001
+From: himanusia <19623185@std.stei.itb.ac.id>
+Date: Tue, 29 Sep 2026 11:19:35 +0700
+Subject: [PATCH] feat(tui): expose the active session provider to user widgets
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A user widget could see the configured default model but not which provider
+the live session actually resolved to, so a provider-aware panel had no
+honest source for that fact.
+
+Add useSessionProvider() to the widget SDK — a reactive read of
+session.info.provider from the UI store, so a widget follows live model and
+session switches instead of guessing from the model name.
+
+Tests: widgetSdk.test.ts asserts the hook reports the session provider and
+follows a switch between two providers on the same model name.
+---
+ ui-tui/src/__tests__/widgetSdk.test.ts | 22 ++++++++++++++++++++++
+ ui-tui/src/sdk/userWidgets.ts          |  4 ++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/ui-tui/src/__tests__/widgetSdk.test.ts b/ui-tui/src/__tests__/widgetSdk.test.ts
+index 944f470a75d..cb3fe181b03 100644
+--- a/ui-tui/src/__tests__/widgetSdk.test.ts
++++ b/ui-tui/src/__tests__/widgetSdk.test.ts
+@@ -15,6 +15,28 @@ const key = (overrides: Partial<WidgetInput['key']> = {}, ch = ''): WidgetInput
+ beforeEach(() => resetOverlayState())
+ 
+ describe('widget SDK host', () => {
++  it('exposes the active session provider to user widgets, not the default model', async () => {
++    const { patchUiState, resetUiState } = await import('../app/uiStore.js')
++    const { widgetSdk } = await import('../sdk/userWidgets.js')
++    const { renderToScreen } = await import('../../packages/hermes-ink/src/ink/render-to-screen.js')
++    const { createElement } = await import('react')
++    const Provider = () => createElement(widgetSdk.Text, null, widgetSdk.useSessionProvider() ?? 'none')
++    const painted = () => {
++      const { screen } = renderToScreen(createElement(Provider), 50)
++      return Array.from({ length: screen.height }, (_, y) =>
++        Array.from({ length: screen.width }, (_, x) => screen.charPool.get(screen.cells[2 * (y * screen.width + x)]!)).join('')
++      ).join('\n')
++    }
++    try {
++      patchUiState({ info: { model: 'same-model', provider: 'openai-codex', skills: {}, tools: {} } })
++      expect(painted()).toContain('openai-codex')
++      patchUiState({ info: { model: 'same-model', provider: 'commandcode', skills: {}, tools: {} } })
++      expect(painted()).toContain('commandcode')
++    } finally {
++      resetUiState()
++    }
++  })
++
+   it('launch → dispatch → close lifecycle drives the overlay slot', () => {
+     expect(launchWidget('grid-test', '5x2')).toBeNull()
+     expect(getOverlayState().widget).toMatchObject({ appId: 'grid-test' })
+diff --git a/ui-tui/src/sdk/userWidgets.ts b/ui-tui/src/sdk/userWidgets.ts
+index 895f6e61e77..6f614b8016c 100644
+--- a/ui-tui/src/sdk/userWidgets.ts
++++ b/ui-tui/src/sdk/userWidgets.ts
+@@ -5,8 +5,10 @@ import { dirname, join } from 'path'
+ import { pathToFileURL } from 'url'
+ 
+ import { Box, Text } from '@hermes/ink'
++import { useStore } from '@nanostores/react'
+ import * as React from 'react'
+ 
++import { $uiState } from '../app/uiStore.js'
+ import { Accordion } from '../components/accordion.js'
+ import { Shimmer, ShimmerRows, useShimmerPhase } from '../components/loaders.js'
+ import { Dialog, Overlay } from '../components/overlay.js'
+@@ -53,6 +55,8 @@ export const widgetSdk = {
+   sparkRows,
+   sparkline,
+   updateWidget,
++  /** Current chat's resolved provider; updates after model/session switches. */
++  useSessionProvider: () => useStore($uiState).info?.provider ?? null,
+   useShimmerPhase
+ } as const
+ 
+-- 
+2.54.0 (Apple Git-157)
+

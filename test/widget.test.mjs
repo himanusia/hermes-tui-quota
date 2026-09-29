@@ -2,7 +2,38 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatQuota } from '../quota.mjs'
+import { formatQuota, interpreterFor, probeQuota } from '../quota.mjs'
+
+test('the Hermes venv interpreter wins over HERMES_PYTHON, and clears PYTHONPATH', () => {
+  // The TUI exports HERMES_PYTHON as the bare tool interpreter, which has no
+  // httpx of its own. Preferring it *and* clearing PYTHONPATH is the bug this
+  // guards: the probe then dies with ModuleNotFoundError.
+  const picked = interpreterFor(
+    { HERMES_HOME: '/h/.hermes', HERMES_PYTHON: '/tools/python3' },
+    path => path === '/h/.hermes/hermes-agent/venv/bin/python'
+  )
+  assert.deepEqual(picked, { cleanPythonPath: true, cmd: '/h/.hermes/hermes-agent/venv/bin/python' })
+})
+
+test('without a venv the fallback keeps PYTHONPATH, since that is what gives it httpx', () => {
+  const picked = interpreterFor(
+    { HERMES_HOME: '/h/.hermes', HERMES_PYTHON: '/tools/python3' },
+    () => false
+  )
+  assert.deepEqual(picked, { cleanPythonPath: false, cmd: '/tools/python3' })
+})
+
+test('HERMES_QUOTA_PYTHON overrides everything and keeps the inherited environment', () => {
+  const picked = interpreterFor({ HERMES_QUOTA_PYTHON: '/custom/python' }, () => true)
+  assert.deepEqual(picked, { cleanPythonPath: false, cmd: '/custom/python' })
+})
+
+test('a missing interpreter is reported as such, not as a generic failure', async () => {
+  await assert.rejects(
+    probeQuota('commandcode', { HERMES_QUOTA_PYTHON: '/nonexistent/python' }),
+    /python not found/
+  )
+})
 
 const data = (windows) => ({ providers: [{ id: 'openai-codex', accounts: [{ fp: 'a', windows }] }] })
 
@@ -33,7 +64,7 @@ test('unconfigured and errored providers are named, not rendered as zero', () =>
   assert.equal(formatQuota({ providers: [{ id: 'openai-codex', accounts: [] }] }, 'openai-codex'),
     'Codex · not configured')
   assert.equal(formatQuota({ providers: [{ id: 'openai-codex', accounts: [{ fp: 'a', error: 'x', windows: [] }] }] }, 'openai-codex'),
-    'Codex · quota unavailable')
+    'Codex · no quota window')
 })
 
 test('an unknown provider id is still named', () => {

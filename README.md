@@ -46,11 +46,25 @@ The probe's `pct` is **used**, not remaining. This widget displays `100 - pct` a
 3. `/quota` toggles the line. It is not auto-opened, so it stays off until you ask for it.
 4. `/widgets-reload` picks up edits to the widget file without a restart.
 
-Requires `probe.py` at `~/.hermes/desktop-plugins/quota-dash/probe.py`; override with `HERMES_QUOTA_PROBE` (and `HERMES_PYTHON` for the interpreter).
+Requires `probe.py` at `~/.hermes/desktop-plugins/quota-dash/probe.py`; override the path with `HERMES_QUOTA_PROBE`.
+
+### Interpreter
+
+The probe imports `httpx`, and picking the wrong interpreter looks like a quota problem rather than a dependency one. In the TUI, Hermes exports `HERMES_PYTHON` as its bare tool interpreter — one that only has `httpx` through the inherited `PYTHONPATH`. Preferring that variable *and* clearing `PYTHONPATH` (to stop the global value shadowing the venv) leaves no `httpx` at all, and the probe exits 1.
+
+So the order is:
+
+1. `HERMES_QUOTA_PYTHON` if set — used as-is, `PYTHONPATH` left alone.
+2. `$HERMES_HOME/hermes-agent/venv/bin/python` if it exists — run with `PYTHONPATH` cleared, since the venv carries its own `httpx`.
+3. `HERMES_PYTHON`, else `python3` — `PYTHONPATH` left alone, because that is the only thing giving it dependencies.
+
+As a last resort set `HERMES_QUOTA_PYTHON` to an interpreter that has `httpx`.
 
 ## Refresh
 
 Re-probes every 60 seconds while the line is open, and immediately when the provider changes. The probe runs with `PYTHONPATH` cleared, since the global value shadows the Hermes venv.
+
+A probe that fails says why, in one short word, instead of hiding behind a generic label: `probe failed`, `probe timeout`, `probe returned no data`, `probe missing deps`, `python not found`. `no quota window` and `not configured` are real answers from the probe, not failures.
 
 ## Test
 

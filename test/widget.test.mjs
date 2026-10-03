@@ -69,12 +69,49 @@ test('missing window data stays unknown instead of a fake 0%', () => {
   assert.equal(line, 'Codex · 5h — left · reset — · week 90% left · reset 4h')
 })
 
-test('the most constrained account wins across a pool, countdown included', () => {
-  const line = formatQuota({ providers: [{ id: 'openai-codex', accounts: [
-    { fp: 'a', windows: [{ k: 'session (5h)', pct: 10, reset: iso(T + min(10)) }] },
-    { fp: 'b', windows: [{ k: 'session (5h)', pct: 80, reset: iso(T + hours(1)) }] }
+test('the dock meters the live account, not the tightest backup', () => {
+  // One provider, two credentials: the dock is space-constrained, so it must
+  // report the account in use — the probe flags it is_active — and tag which
+  // one only because the choice is ambiguous.
+  const line = formatQuota({ providers: [{ id: 'openai-codex', active_account: { fp: 'a', label: 'primary' }, accounts: [
+    { fp: 'a', label: 'primary', is_active: true, windows: [
+      { k: 'session (5h)', pct: 10, reset: iso(T + min(10)) },
+      { k: 'weekly', pct: 5 }
+    ] },
+    { fp: 'b', label: 'backup', is_active: false, windows: [{ k: 'session (5h)', pct: 80, reset: iso(T + hours(1)) }] }
   ] }] }, 'openai-codex', T)
-  assert.equal(line, 'Codex · 5h 20% left · reset 1h · week — left · reset —')
+  assert.equal(line, 'Codex [primary] · 5h 90% left · reset 10m · week 95% left · reset —')
+})
+
+test('an is_active flag beats position when no active_account hint is sent', () => {
+  const line = formatQuota({ providers: [{ id: 'openai-codex', accounts: [
+    { fp: 'a', label: 'primary', windows: [{ k: 'session (5h)', pct: 10 }] },
+    { fp: 'b', label: 'backup', is_active: true, windows: [{ k: 'session (5h)', pct: 80 }] }
+  ] }] }, 'openai-codex', T)
+  assert.equal(line, 'Codex [backup] · 5h 20% left · reset — · week — left · reset —')
+})
+
+test('a shared-account group keeps the live credential, not the last row', () => {
+  // Codex OAuth rows share one account id (acct) and therefore one quota; the
+  // old Map-dedup kept the LAST row and silently dropped the active one.
+  const line = formatQuota({ providers: [{ id: 'openai-codex', accounts: [
+    { fp: 'a', acct: '332491', label: 'live', is_active: true, windows: [{ k: 'session (5h)', pct: 10 }] },
+    { fp: 'b', acct: '332491', label: 'backup', windows: [{ k: 'session (5h)', pct: 80 }] }
+  ] }] }, 'openai-codex', T)
+  assert.equal(line, 'Codex · 5h 90% left · reset — · week — left · reset —')
+})
+
+test('a shared-account group falls back to the sibling row that has data', () => {
+  const line = formatQuota({ providers: [{ id: 'openai-codex', accounts: [
+    { fp: 'a', acct: '332491', label: 'live', is_active: true, error: 'HTTP 429', windows: [] },
+    { fp: 'b', acct: '332491', label: 'backup', windows: [{ k: 'session (5h)', pct: 80 }] }
+  ] }] }, 'openai-codex', T)
+  assert.equal(line, 'Codex · 5h 20% left · reset — · week — left · reset —')
+})
+
+test('a single-account provider keeps its terse line, with no account tag', () => {
+  const line = formatQuota(data([{ k: 'session (5h)', pct: 50, reset: iso(T + min(30)) }]), 'openai-codex', T)
+  assert.ok(!line.includes('['), 'no account is named when there is only one')
 })
 
 test('unconfigured and errored providers are named, not rendered as zero', () => {

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatQuota, interpreterFor, probeQuota, resetIn } from '../quota.mjs'
+import { formatQuota, interpreterFor, probeQuota, quotaLines, resetIn } from '../quota.mjs'
 
 test('the Hermes venv interpreter wins over HERMES_PYTHON, and clears PYTHONPATH', () => {
   // The TUI exports HERMES_PYTHON as the bare tool interpreter, which has no
@@ -35,7 +35,8 @@ test('a missing interpreter is reported as such, not as a generic failure', asyn
   )
 })
 
-const data = (windows) => ({ providers: [{ id: 'openai-codex', accounts: [{ fp: 'a', windows }] }] })
+const data = (windows, id = 'openai-codex') =>
+  ({ providers: [{ id, accounts: [{ fp: 'a', windows }] }] })
 
 const T = Date.now()
 const iso = ms => new Date(ms).toISOString()
@@ -112,4 +113,36 @@ test('register auto-docks on launch once per process, and rescans never re-dock'
   delete globalThis[key]
   await (await register('relaunch'))(mockSdk)
   assert.deepEqual(opened, ['quota', 'quota'], 'the next TUI launch docks again')
+})
+
+test('a monthly provider wraps onto two lines, so the month is never truncated', () => {
+  // CommandCode: fiveHour + weekly are rate-limit windows, "monthly" is the
+  // $ credit budget the probe synthesizes from the plan total. Three segments
+  // do not fit a narrow dock, and the tail is what gets cut — so the monthly
+  // case wraps: line 1 = provider + 5h, line 2 = week + month.
+  const now = new Date('2026-10-02T01:00:00+07:00').getTime()
+  const text = formatQuota(data([
+    { k: '5h', pct: 7.2, reset: '2026-10-02T03:15+07:00' },
+    { k: 'weekly', pct: 46.6, reset: '2026-10-02T19:18+07:00' },
+    { k: 'monthly', pct: 80.2, reset: '2026-10-11T19:03+07:00' }
+  ], 'commandcode'), 'commandcode', now)
+  assert.deepEqual(quotaLines(text), [
+    'CommandCode · 5h 93% left · reset 2h 15m',
+    'week 53% left · reset 18h 18m · month 20% left · reset 9d 18h'
+  ])
+})
+
+test('the monthly wrap never costs a two-window provider its single line', () => {
+  const line = formatQuota(data([{ k: 'session (5h)', pct: 91 }, { k: 'weekly', pct: 63 }]), 'openai-codex')
+  assert.ok(!/month/i.test(line), 'no monthly window means no monthly segment')
+  assert.deepEqual(quotaLines(line), ['Codex · 5h 9% left · reset — · week 37% left · reset —'])
+})
+
+test('a monthly window without a reset still reports the remaining share', () => {
+  const now = new Date('2026-10-02T01:00:00+07:00').getTime()
+  const text = formatQuota(data([{ k: 'monthly', pct: 80.2 }], 'commandcode'), 'commandcode', now)
+  assert.deepEqual(quotaLines(text), [
+    'CommandCode · 5h — left · reset —',
+    'week — left · reset — · month 20% left · reset —'
+  ])
 })

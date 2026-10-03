@@ -4,9 +4,11 @@ A single plain-text line in the Hermes TUI showing how much quota is **left** on
 
 ```
 Codex · 5h 9% left · reset 2h 15m · week 37% left · reset 2d 20h
+CommandCode · 5h 88% left · reset 1h 49m
+week 52% left · reset 17h 52m · month 20% left · reset 9d 17h
 ```
 
-No border, no panel — it sits in the composer dock directly above the `Ready · model` rule, which sits above the input.
+No border, no panel — it sits in the composer dock directly above the `Ready · model` rule, which sits above the input. A provider with two windows takes one dock row; a provider that also publishes a monthly window takes two (`provider + 5h`, then `week + month`), because a single three-window line overruns a narrow dock and the truncated end is exactly the monthly number.
 
 ## How it reads the provider
 
@@ -38,6 +40,10 @@ The same two changes also live as the branch `feat/quota-widget-provider` on the
 It shells out to the read-only probe shipped with the [Hermes Provider Quota Dashboard](https://github.com/himanusia/hermes-provider-quota-dashboard) — the same file the desktop pane uses. This repository holds no credentials; the probe reads the local credential pool itself and prints one JSON line.
 
 The probe's `pct` is **used**, not remaining. This widget displays `100 - pct` and says `left`, so the number means what it looks like. Missing windows stay `—` and are never turned into a fake `0%`.
+
+### Monthly
+
+A `month` segment is appended **only when the provider publishes a monthly window** — OpenCode Go's own monthly percentage, or the $ credit budget the probe synthesizes for CommandCode from its plan total. Providers without one (Codex) keep the same two-window single line, so nothing is invented for them. When the month segment exists the line wraps to a second dock row (`formatQuota` returns it with a `\n`, `quotaLines` splits it, and the widget paints one `Text` per line) — the dock is in-flow, so the second row reserves real space instead of clipping the monthly number.
 
 ### Resets
 
@@ -76,7 +82,7 @@ A probe that fails says why, in one short word, instead of hiding behind a gener
 node --test test/widget.test.mjs
 ```
 
-Covers the used→remaining inversion, clamping, pooled accounts taking the most constrained value, reset countdowns, auto-dock (one dock per launch; rescans never re-dock), and the not-configured/unavailable/unknown-provider labels.
+Covers the used→remaining inversion, clamping, pooled accounts taking the most constrained value, reset countdowns, auto-dock (one dock per launch; rescans never re-dock), the not-configured/unavailable/unknown-provider labels, and the monthly segment (metered when the provider publishes one, wrapped onto a second line, absent for two-window providers).
 
 ## Limits
 

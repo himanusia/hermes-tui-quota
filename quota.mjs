@@ -61,7 +61,23 @@ export function formatQuota(data, providerId, now = Date.now()) {
     return w ? `${Math.max(0, Math.min(100, 100 - Number(w.pct))).toFixed(0)}%` : '—'
   }
   const reset = label => resetIn(windowAt(label)?.reset, now)
-  return `${name} · 5h ${remaining(/5h|session/i)} left · reset ${reset(/5h|session/i)} · week ${remaining(/week/i)} left · reset ${reset(/week/i)}`
+  const first = `${name} · 5h ${remaining(/5h|session/i)} left · reset ${reset(/5h|session/i)}`
+  const second = `week ${remaining(/week/i)} left · reset ${reset(/week/i)}`
+  // Monthly is optional: providers that publish it (CommandCode's $ credit
+  // budget, OpenCode Go's monthly window) get a third segment. Three segments
+  // overrun a narrow dock, and the tail is what gets truncated — which is the
+  // segment being asked for — so the monthly case WRAPS onto a second line.
+  // Two-window providers (Codex) keep the single line.
+  if (!windowAt(/month/i)) {
+    return `${first} · ${second}`
+  }
+  return `${first}\n${second} · month ${remaining(/month/i)} left · reset ${reset(/month/i)}`
+}
+
+/** The widget paints one Text per line: a wrapped month stays visible in a
+ *  narrow dock instead of being truncated off the end of one long line. */
+export function quotaLines(text) {
+  return String(text ?? '').split('\n')
 }
 
 /** Rejects with a short reason that is safe to put on the status line. */
@@ -88,7 +104,7 @@ export function probeQuota(providerId, env = process.env) {
 }
 
 export default function register(sdk) {
-  const { defineWidgetApp, h, Text, React } = sdk
+  const { Box, defineWidgetApp, h, Text, React } = sdk
   let app
   function Body({ state, t }) {
     // Provider awareness comes from the TUI SDK hook (session.info.provider),
@@ -114,7 +130,10 @@ export default function register(sdk) {
       : !providerId ? 'Quota · provider unavailable'
         : !Object.hasOwn(providers, providerId) ? `${providerId} · quota unsupported`
           : state.provider === providerId ? state.text : `${providers[providerId]} · loading…`
-    return h(Text, { color: t.color.muted, wrap: 'truncate-end' }, text)
+    // One Text per line: the dock is an in-flow flex row, so a second Text in
+    // a column Box reserves a real second row instead of being cut off.
+    return h(Box, { flexDirection: 'column' }, quotaLines(text).map((line, index) =>
+      h(Text, { key: index, color: t.color.muted, wrap: 'truncate-end' }, line)))
   }
   app = defineWidgetApp({
     id: 'quota', help: 'toggle quota for the active provider',

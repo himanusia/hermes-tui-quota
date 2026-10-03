@@ -61,11 +61,32 @@ export function resetIn(iso, now = Date.now()) {
 
 export function formatQuota(data, providerId, now = Date.now()) {
   const name = providers[providerId] || providerId || 'Unknown provider'
-  const accounts = data.providers?.find(row => row.id === providerId)?.accounts || []
+  const providerRow = data.providers?.find(row => row.id === providerId)
+  const accounts = providerRow?.accounts || []
   if (!accounts.length) return `${name} · not configured`
   // Probe pct means USED. Display REMAINING explicitly; missing is never 0%.
-  const valid = [...new Map(accounts.map(row => [row.acct || row.fp, row])).values()]
-    .filter(row => !row.error && Array.isArray(row.windows) && row.windows.length)
+  // Credentials resolving to the same account share one quota (Codex OAuth
+  // rows do), so collapse them — but carry the live flag through the collapse,
+  // or the dock would name and meter a backup instead of the active credential.
+  const byAccount = new Map()
+  const usable = row => !row.error && Array.isArray(row.windows) && row.windows.length > 0
+  for (const row of accounts) {
+    const key = row.acct || row.fp
+    const kept = byAccount.get(key)
+    if (!kept) {
+      byAccount.set(key, { row, active: Boolean(row.is_active) })
+      continue
+    }
+    kept.active = kept.active || Boolean(row.is_active)
+    // Data comes from a row that actually has a reading; a sibling credential
+    // sharing the account must not leave the meter blank when one row errored.
+    if (!usable(kept.row) && usable(row)) {
+      kept.row = row
+    }
+  }
+  const valid = [...byAccount.values()]
+    .filter(({ row }) => usable(row))
+    .map(({ row, active }) => ({ ...row, is_active: active }))
   if (!valid.length) {
     // Say WHY instead of a bare "no quota window": a rate-limited or expired
     // login is actionable, an empty answer is not. The probe's message leads
@@ -73,9 +94,21 @@ export function formatQuota(data, providerId, now = Date.now()) {
     const reason = accounts.map(row => row.error).find(Boolean)
     return reason ? `${name} · ${String(reason).split(' - ')[0]}` : `${name} · no quota window`
   }
-  // Highest used pct across accounts is the binding window; its reset is when
-  // the shown remaining quota comes back.
-  const windowAt = label => valid.flatMap(row => row.windows.filter(w => label.test(w.k)))
+  // The dock is space-constrained, so it meters ONE account: the live one. The
+  // probe flags it (`is_active`); `active_account` is the belt-and-braces hint
+  // and the first row is the last resort (older probe payloads). Metering the
+  // worst backup instead of the account in use was the bug this fixes.
+  const marked = valid.find(row => row.is_active)
+    || valid.find(row => row.fp && row.fp === providerRow?.active_account?.fp)
+    || valid[0]
+  const active = [marked]
+  // Name the account only when the provider meters more than one distinct
+  // account; a single account (even with several credentials) keeps the terse
+  // line it always had.
+  const acctTag = valid.length > 1 && marked.label ? ` [${marked.label}]` : ''
+  // Highest used pct within the live account is the binding window; its reset
+  // is when the shown remaining quota comes back.
+  const windowAt = label => active.flatMap(row => row.windows.filter(w => label.test(w.k)))
     .filter(w => Number.isFinite(Number(w.pct)))
     .reduce((a, b) => (!a || Number(b.pct) > Number(a.pct) ? b : a), null)
   const remaining = label => {
@@ -85,10 +118,10 @@ export function formatQuota(data, providerId, now = Date.now()) {
   const reset = label => resetIn(windowAt(label)?.reset, now)
   // Grouped quota (Antigravity: Gemini, Claude/GPT): every group has its own
   // 5h + weekly limits, so each group gets its own line.
-  const groups = [...new Set(valid.flatMap(row => row.windows).map(w => w.group).filter(Boolean))]
+  const groups = [...new Set(active.flatMap(row => row.windows).map(w => w.group).filter(Boolean))]
   if (groups.length) {
     return groups.map((group, index) => {
-      const at = re => valid.flatMap(row => row.windows.filter(w => w.group === group && re.test(w.k)))
+      const at = re => active.flatMap(row => row.windows.filter(w => w.group === group && re.test(w.k)))
         .filter(w => Number.isFinite(Number(w.pct)))
         .reduce((x, y) => (!x || Number(y.pct) > Number(x.pct) ? y : x), null)
       const seg = (tag, re) => {
@@ -96,11 +129,11 @@ export function formatQuota(data, providerId, now = Date.now()) {
         const left = w ? `${Math.max(0, Math.min(100, 100 - Number(w.pct))).toFixed(0)}%` : '—'
         return `${tag} ${left} left · reset ${resetIn(w?.reset, now)}`
       }
-      const head = index === 0 ? `${name} · ${group}` : group
+      const head = index === 0 ? `${name}${acctTag} · ${group}` : group
       return `${head} · ${seg('5h', /5h|session/i)} · ${seg('week', /week/i)}`
     }).join('\n')
   }
-  const first = `${name} · 5h ${remaining(/5h|session/i)} left · reset ${reset(/5h|session/i)}`
+  const first = `${name}${acctTag} · 5h ${remaining(/5h|session/i)} left · reset ${reset(/5h|session/i)}`
   // Claude reports per-model weekly caps beside the all-models one; the
   // all-models window ("weekly") is the headline, the rest fall back.
   const week = windowAt(/^week(ly)?$/i) ? /^week(ly)?$/i : /week/i

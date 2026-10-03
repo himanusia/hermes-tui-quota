@@ -64,6 +64,13 @@ export function formatQuota(data, providerId, now = Date.now()) {
   const providerRow = data.providers?.find(row => row.id === providerId)
   const accounts = providerRow?.accounts || []
   if (!accounts.length) return `${name} · not configured`
+  // A pool benches one (credential, model) pair at a time, so a provider can be
+  // configured and healthy-looking yet serve NOTHING for the model it will be
+  // called with. Report that instead of metering a credential the pool refuses.
+  const pool = providerRow?.pool
+  if (pool && pool.state === 'empty') {
+    return pool.model ? `${name} · no credential for ${pool.model}` : `${name} · pool empty`
+  }
   // Probe pct means USED. Display REMAINING explicitly; missing is never 0%.
   // Credentials resolving to the same account share one quota (Codex OAuth
   // rows do), so collapse them — but carry the live flag through the collapse,
@@ -95,12 +102,14 @@ export function formatQuota(data, providerId, now = Date.now()) {
     return reason ? `${name} · ${String(reason).split(' - ')[0]}` : `${name} · no quota window`
   }
   // The dock is space-constrained, so it meters ONE account: the live one. The
-  // probe flags it (`is_active`); `active_account` is the belt-and-braces hint
-  // and the first row is the last resort (older probe payloads). Metering the
-  // worst backup instead of the account in use was the bug this fixes.
-  const marked = valid.find(row => row.is_active)
-    || valid.find(row => row.fp && row.fp === providerRow?.active_account?.fp)
-    || valid[0]
+  // probe flags it (`is_active`) and stamps each row with the pool's verdict, so
+  // a benched credential can never be presented as the one in use. `active_account`
+  // is the belt-and-braces hint and the first row is the last resort (older payloads).
+  const servable = valid.filter(row => !row.verdict || row.verdict === 'available')
+  const pickFrom = servable.length ? servable : valid
+  const marked = pickFrom.find(row => row.is_active)
+    || pickFrom.find(row => row.fp && row.fp === providerRow?.active_account?.fp)
+    || pickFrom[0]
   const active = [marked]
   // Name the account only when the provider meters more than one distinct
   // account; a single account (even with several credentials) keeps the terse

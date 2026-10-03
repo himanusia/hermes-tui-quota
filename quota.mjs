@@ -9,14 +9,16 @@ const providers = {
   'openai-codex': 'Codex',
   'opencode-go': 'OpenCode Go',
   commandcode: 'CommandCode',
-  'claude-subscription': 'Claude'
+  'claude-subscription': 'Claude',
+  'antigravity-subscription': 'Antigravity'
 }
 // Session provider id (session.info.provider) → probe provider id. The Claude
 // subscription plugins drive Claude Code's own OAuth login, which the probe
 // meters as `claude-subscription`.
 const aliases = {
   'claude-subscription-directsdk-experimental': 'claude-subscription',
-  'claude-subscription-directsdk': 'claude-subscription'
+  'claude-subscription-directsdk': 'claude-subscription',
+  'antigravity-subscription-directsdk': 'antigravity-subscription'
 }
 
 /** The probe id that meters a session provider, or null when unsupported. */
@@ -64,7 +66,13 @@ export function formatQuota(data, providerId, now = Date.now()) {
   // Probe pct means USED. Display REMAINING explicitly; missing is never 0%.
   const valid = [...new Map(accounts.map(row => [row.acct || row.fp, row])).values()]
     .filter(row => !row.error && Array.isArray(row.windows) && row.windows.length)
-  if (!valid.length) return `${name} · no quota window`
+  if (!valid.length) {
+    // Say WHY instead of a bare "no quota window": a rate-limited or expired
+    // login is actionable, an empty answer is not. The probe's message leads
+    // with its status ("HTTP 429 - …"), so the short form is the part before " - ".
+    const reason = accounts.map(row => row.error).find(Boolean)
+    return reason ? `${name} · ${String(reason).split(' - ')[0]}` : `${name} · no quota window`
+  }
   // Highest used pct across accounts is the binding window; its reset is when
   // the shown remaining quota comes back.
   const windowAt = label => valid.flatMap(row => row.windows.filter(w => label.test(w.k)))
@@ -75,6 +83,17 @@ export function formatQuota(data, providerId, now = Date.now()) {
     return w ? `${Math.max(0, Math.min(100, 100 - Number(w.pct))).toFixed(0)}%` : '—'
   }
   const reset = label => resetIn(windowAt(label)?.reset, now)
+  // Per-model pools (Antigravity: Claude / Gemini Pro / Gemini Flash / …) have
+  // no 5h or weekly window. List each pool's remaining share; the reset is the
+  // tightest pool's.
+  if (!windowAt(/5h|session|week|month/i)) {
+    const all = valid.flatMap(row => row.windows).filter(w => Number.isFinite(Number(w.pct)))
+    const pools = [...new Map(all.map(w => [w.k, all.filter(x => x.k === w.k)
+      .reduce((a, b) => (Number(b.pct) > Number(a.pct) ? b : a))])).values()]
+    const tightest = pools.reduce((a, b) => (Number(b.pct) > Number(a.pct) ? b : a))
+    const parts = pools.map(w => `${String(w.k).replace(/ models$/i, '')} ${Math.max(0, Math.min(100, 100 - Number(w.pct))).toFixed(0)}%`)
+    return `${name} · ${parts.join(' · ')} left · reset ${resetIn(tightest.reset, now)}`
+  }
   const first = `${name} · 5h ${remaining(/5h|session/i)} left · reset ${reset(/5h|session/i)}`
   // Claude reports per-model weekly caps beside the all-models one; the
   // all-models window ("weekly") is the headline, the rest fall back.

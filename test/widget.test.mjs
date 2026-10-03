@@ -81,6 +81,8 @@ test('unconfigured and errored providers are named, not rendered as zero', () =>
   assert.equal(formatQuota({ providers: [{ id: 'openai-codex', accounts: [] }] }, 'openai-codex'),
     'Codex · not configured')
   assert.equal(formatQuota({ providers: [{ id: 'openai-codex', accounts: [{ fp: 'a', error: 'x', windows: [] }] }] }, 'openai-codex'),
+    'Codex · x')
+  assert.equal(formatQuota({ providers: [{ id: 'openai-codex', accounts: [{ fp: 'a', windows: [] }] }] }, 'openai-codex'),
     'Codex · no quota window')
 })
 
@@ -163,4 +165,22 @@ test('Claude headlines the all-models weekly window, not a per-model one', () =>
     { k: 'weekly', pct: 2, reset: '2026-10-03T20:59+07:00' }
   ], 'claude-subscription'), 'claude-subscription', now)
   assert.equal(text, 'Claude · 5h 87% left · reset 4h 49m · week 98% left · reset 4h 59m')
+})
+
+test('an errored provider says why instead of "no quota window"', () => {
+  const line = formatQuota({ providers: [{ id: 'claude-subscription', accounts: [
+    { fp: 'a', error: 'HTTP 429 - usage endpoint rate-limited; retry in a minute', windows: [] }
+  ] }] }, 'claude-subscription')
+  assert.equal(line, 'Claude · HTTP 429')
+})
+
+test('Antigravity lists each model pool, reset from the tightest pool', () => {
+  assert.equal(probeIdFor('antigravity-subscription-directsdk'), 'antigravity-subscription')
+  const now = new Date('2026-10-03T18:00:00+07:00').getTime()
+  const text = formatQuota(data([
+    { k: 'Claude models', pct: 40, reset: '2026-10-03T23:18+07:00' },
+    { k: 'Gemini Pro', pct: 0, reset: '2026-10-04T01:00+07:00' },
+    { k: 'Gemini Flash', pct: 25, reset: '2026-10-03T22:00+07:00' }
+  ], 'antigravity-subscription'), 'antigravity-subscription', now)
+  assert.equal(text, 'Antigravity · Claude 60% · Gemini Pro 100% · Gemini Flash 75% left · reset 5h 18m')
 })

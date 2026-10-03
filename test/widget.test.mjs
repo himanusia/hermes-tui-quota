@@ -174,13 +174,17 @@ test('an errored provider says why instead of "no quota window"', () => {
   assert.equal(line, 'Claude · HTTP 429')
 })
 
-test('Antigravity lists each model pool, reset from the tightest pool', () => {
+test('Antigravity shows one line per quota group, each with 5h and weekly', () => {
   assert.equal(probeIdFor('antigravity-subscription-directsdk'), 'antigravity-subscription')
   const now = new Date('2026-10-03T18:00:00+07:00').getTime()
   const text = formatQuota(data([
-    { k: 'Claude models', pct: 40, reset: '2026-10-03T23:18+07:00' },
-    { k: 'Gemini Pro', pct: 0, reset: '2026-10-04T01:00+07:00' },
-    { k: 'Gemini Flash', pct: 25, reset: '2026-10-03T22:00+07:00' }
+    { k: 'Gemini 5h', group: 'Gemini', pct: 50, reset: '2026-10-03T23:25+07:00' },
+    { k: 'Gemini weekly', group: 'Gemini', pct: 10, reset: '2026-10-10T18:25+07:00' },
+    { k: 'Claude/GPT 5h', group: 'Claude/GPT', pct: 80, reset: '2026-10-03T23:25+07:00' },
+    { k: 'Claude/GPT weekly', group: 'Claude/GPT', pct: 25, reset: '2026-10-10T18:25+07:00' }
   ], 'antigravity-subscription'), 'antigravity-subscription', now)
-  assert.equal(text, 'Antigravity · Claude 60% · Gemini Pro 100% · Gemini Flash 75% left · reset 5h 18m')
+  assert.deepEqual(quotaLines(text), [
+    'Antigravity · Gemini · 5h 50% left · reset 5h 25m · week 90% left · reset 7d',
+    'Claude/GPT · 5h 20% left · reset 5h 25m · week 75% left · reset 7d'
+  ])
 })

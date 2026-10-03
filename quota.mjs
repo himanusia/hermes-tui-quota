@@ -83,16 +83,22 @@ export function formatQuota(data, providerId, now = Date.now()) {
     return w ? `${Math.max(0, Math.min(100, 100 - Number(w.pct))).toFixed(0)}%` : '—'
   }
   const reset = label => resetIn(windowAt(label)?.reset, now)
-  // Per-model pools (Antigravity: Claude / Gemini Pro / Gemini Flash / …) have
-  // no 5h or weekly window. List each pool's remaining share; the reset is the
-  // tightest pool's.
-  if (!windowAt(/5h|session|week|month/i)) {
-    const all = valid.flatMap(row => row.windows).filter(w => Number.isFinite(Number(w.pct)))
-    const pools = [...new Map(all.map(w => [w.k, all.filter(x => x.k === w.k)
-      .reduce((a, b) => (Number(b.pct) > Number(a.pct) ? b : a))])).values()]
-    const tightest = pools.reduce((a, b) => (Number(b.pct) > Number(a.pct) ? b : a))
-    const parts = pools.map(w => `${String(w.k).replace(/ models$/i, '')} ${Math.max(0, Math.min(100, 100 - Number(w.pct))).toFixed(0)}%`)
-    return `${name} · ${parts.join(' · ')} left · reset ${resetIn(tightest.reset, now)}`
+  // Grouped quota (Antigravity: Gemini, Claude/GPT): every group has its own
+  // 5h + weekly limits, so each group gets its own line.
+  const groups = [...new Set(valid.flatMap(row => row.windows).map(w => w.group).filter(Boolean))]
+  if (groups.length) {
+    return groups.map((group, index) => {
+      const at = re => valid.flatMap(row => row.windows.filter(w => w.group === group && re.test(w.k)))
+        .filter(w => Number.isFinite(Number(w.pct)))
+        .reduce((x, y) => (!x || Number(y.pct) > Number(x.pct) ? y : x), null)
+      const seg = (tag, re) => {
+        const w = at(re)
+        const left = w ? `${Math.max(0, Math.min(100, 100 - Number(w.pct))).toFixed(0)}%` : '—'
+        return `${tag} ${left} left · reset ${resetIn(w?.reset, now)}`
+      }
+      const head = index === 0 ? `${name} · ${group}` : group
+      return `${head} · ${seg('5h', /5h|session/i)} · ${seg('week', /week/i)}`
+    }).join('\n')
   }
   const first = `${name} · 5h ${remaining(/5h|session/i)} left · reset ${reset(/5h|session/i)}`
   // Claude reports per-model weekly caps beside the all-models one; the

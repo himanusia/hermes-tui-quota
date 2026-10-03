@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatQuota, interpreterFor, probeQuota, quotaLines, resetIn } from '../quota.mjs'
+import { formatQuota, interpreterFor, probeIdFor, probeQuota, quotaLines, resetIn } from '../quota.mjs'
 
 test('the Hermes venv interpreter wins over HERMES_PYTHON, and clears PYTHONPATH', () => {
   // The TUI exports HERMES_PYTHON as the bare tool interpreter, which has no
@@ -145,4 +145,22 @@ test('a monthly window without a reset still reports the remaining share', () =>
     'CommandCode · 5h — left · reset —',
     'week — left · reset — · month 20% left · reset —'
   ])
+})
+
+test('the Claude DirectSDK session provider is metered as the Claude subscription', () => {
+  assert.equal(probeIdFor('claude-subscription-directsdk-experimental'), 'claude-subscription')
+  assert.equal(probeIdFor('claude-subscription'), 'claude-subscription')
+  assert.equal(probeIdFor('openai-codex'), 'openai-codex')
+  assert.equal(probeIdFor('brand-new'), null)
+  assert.equal(probeIdFor(null), null)
+})
+
+test('Claude headlines the all-models weekly window, not a per-model one', () => {
+  const now = new Date('2026-10-03T16:00:00+07:00').getTime()
+  const text = formatQuota(data([
+    { k: 'session (5h)', pct: 13, reset: '2026-10-03T20:49+07:00' },
+    { k: 'weekly sonnet', pct: 90, reset: '2026-10-05T07:00+07:00' },
+    { k: 'weekly', pct: 2, reset: '2026-10-03T20:59+07:00' }
+  ], 'claude-subscription'), 'claude-subscription', now)
+  assert.equal(text, 'Claude · 5h 87% left · reset 4h 49m · week 98% left · reset 4h 59m')
 })

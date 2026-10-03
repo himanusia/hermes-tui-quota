@@ -109,6 +109,50 @@ test('a shared-account group falls back to the sibling row that has data', () =>
   assert.equal(line, 'Codex · 5h 20% left · reset — · week — left · reset —')
 })
 
+test('a pool with nothing servable for the model says so instead of metering a benched key', () => {
+  // The probe benches a (credential, model) pair: a provider can be configured
+  // and healthy-looking while serving nothing for the model it will be called
+  // with. Metering a benched credential's leftover quota hides a hard failure.
+  const payload = {
+    providers: [{
+      id: 'openai-codex',
+      pool: { model: 'coding-safe', strategy: 'least_used', state: 'empty', total: 3, available: 0 },
+      accounts: [
+        { fp: 'a', label: 'live', windows: [{ k: 'session (5h)', pct: 5 }], verdict: 'model_benched' },
+        { fp: 'b', label: 'backup', windows: [{ k: 'session (5h)', pct: 60 }], verdict: 'model_benched' }
+      ]
+    }]
+  }
+  assert.equal(formatQuota(payload, 'openai-codex', T), 'Codex · no credential for coding-safe')
+})
+
+test('an empty pool with an unknown scope still refuses to invent a meter', () => {
+  const payload = {
+    providers: [{
+      id: 'openai-codex',
+      pool: { model: null, state: 'empty', total: 1, available: 0 },
+      accounts: [{ fp: 'a', windows: [{ k: 'session (5h)', pct: 5 }], verdict: 'dead' }]
+    }]
+  }
+  assert.equal(formatQuota(payload, 'openai-codex', T), 'Codex · pool empty')
+})
+
+test('a benched sibling never becomes the metered account', () => {
+  // Pool is healthy overall, but the only credential with a reading is benched:
+  // the meter must come from the servable row.
+  const payload = {
+    providers: [{
+      id: 'openai-codex',
+      pool: { model: 'gpt-6-luna-900k', strategy: 'least_used', state: 'ok', total: 2, available: 1 },
+      accounts: [
+        { fp: 'a', label: 'live', windows: [{ k: 'session (5h)', pct: 5 }], verdict: 'model_benched' },
+        { fp: 'b', label: 'backup', is_active: true, windows: [{ k: 'session (5h)', pct: 60 }], verdict: 'available' }
+      ]
+    }]
+  }
+  assert.equal(formatQuota(payload, 'openai-codex', T), 'Codex [backup] · 5h 40% left · reset — · week — left · reset —')
+})
+
 test('a single-account provider keeps its terse line, with no account tag', () => {
   const line = formatQuota(data([{ k: 'session (5h)', pct: 50, reset: iso(T + min(30)) }]), 'openai-codex', T)
   assert.ok(!line.includes('['), 'no account is named when there is only one')

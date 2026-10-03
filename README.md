@@ -70,6 +70,30 @@ So the order is:
 
 As a last resort set `HERMES_QUOTA_PYTHON` to an interpreter that has `httpx`.
 
+## After `hermes update`
+
+`hermes update` stashes tracked modifications before it pulls. When that stash is
+not restored (a stale `.git/index.lock` is enough to fail the restore), the
+checkout — and the TUI rebuilt from it — comes back without the hook, and the
+line reverts to `Quota · needs Hermes SDK hook`. The changes are never lost:
+they sit in the update's autostash (`git stash list`).
+
+`scripts/repair-hook.sh` puts both halves back and is safe to run at any time:
+
+```
+scripts/repair-hook.sh
+```
+
+It applies `patches/*.patch` only when the hook is absent from the source, and
+rebuilds `ui-tui/dist/entry.js` only when the hook is absent from the bundle; it
+is a plain no-op once both are live. Before writing anything it dry-runs every
+patch, so a hunk that no longer applies against newer upstream code exits 2 with
+the tree untouched, instead of leaving a half-applied tree. The outcome lands in
+`$HERMES_HOME/runtime/quota-hook-status.json`.
+
+A TUI that is already running keeps the bundle it loaded at launch, so after a
+repair restart it once (`/quit`, then relaunch) and the line is back.
+
 ## Refresh
 
 Re-probes every 60 seconds while the line is open, and immediately when the provider changes. The probe runs with `PYTHONPATH` cleared, since the global value shadows the Hermes venv.

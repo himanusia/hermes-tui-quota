@@ -153,6 +153,21 @@ test('a benched sibling never becomes the metered account', () => {
   assert.equal(formatQuota(payload, 'openai-codex', T), 'Codex [backup] · 5h 40% left · reset — · week — left · reset —')
 })
 
+test('a servable pool is metered normally, never as "no credential"', () => {
+  // The false-empty regression: env-backed rows (commandcode, gemini,
+  // openai-api, opencode-go) store no token on disk, so a probe that forgets to
+  // hydrate them reports state=empty and the dock announces "no credential" for
+  // a provider that is perfectly healthy.
+  const payload = {
+    providers: [{
+      id: 'commandcode',
+      pool: { model: 'deepseek/deepseek-v4.1-flash', strategy: 'fill_first', state: 'ok', total: 1, available: 1 },
+      accounts: [{ fp: 'a', label: 'COMMANDCODE_API_KEY (env)', is_active: true, verdict: 'available', windows: [{ k: 'session (5h)', pct: 4 }] }]
+    }]
+  }
+  assert.equal(formatQuota(payload, 'commandcode', T), 'CommandCode · 5h 96% left · reset — · week — left · reset —')
+})
+
 test('a single-account provider keeps its terse line, with no account tag', () => {
   const line = formatQuota(data([{ k: 'session (5h)', pct: 50, reset: iso(T + min(30)) }]), 'openai-codex', T)
   assert.ok(!line.includes('['), 'no account is named when there is only one')

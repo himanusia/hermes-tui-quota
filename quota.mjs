@@ -8,7 +8,21 @@ const probe = process.env.HERMES_QUOTA_PROBE || join(home, 'desktop-plugins', 'q
 const providers = {
   'openai-codex': 'Codex',
   'opencode-go': 'OpenCode Go',
-  commandcode: 'CommandCode'
+  commandcode: 'CommandCode',
+  'claude-subscription': 'Claude'
+}
+// Session provider id (session.info.provider) → probe provider id. The Claude
+// subscription plugins drive Claude Code's own OAuth login, which the probe
+// meters as `claude-subscription`.
+const aliases = {
+  'claude-subscription-directsdk-experimental': 'claude-subscription',
+  'claude-subscription-directsdk': 'claude-subscription'
+}
+
+/** The probe id that meters a session provider, or null when unsupported. */
+export function probeIdFor(sessionProvider) {
+  const id = aliases[sessionProvider] || sessionProvider
+  return id && Object.hasOwn(providers, id) ? id : null
 }
 const intervalMs = 60_000
 
@@ -62,7 +76,10 @@ export function formatQuota(data, providerId, now = Date.now()) {
   }
   const reset = label => resetIn(windowAt(label)?.reset, now)
   const first = `${name} · 5h ${remaining(/5h|session/i)} left · reset ${reset(/5h|session/i)}`
-  const second = `week ${remaining(/week/i)} left · reset ${reset(/week/i)}`
+  // Claude reports per-model weekly caps beside the all-models one; the
+  // all-models window ("weekly") is the headline, the rest fall back.
+  const week = windowAt(/^week(ly)?$/i) ? /^week(ly)?$/i : /week/i
+  const second = `week ${remaining(week)} left · reset ${reset(week)}`
   // Monthly is optional: providers that publish it (CommandCode's $ credit
   // budget, OpenCode Go's monthly window) get a third segment. Three segments
   // overrun a narrow dock, and the tail is what gets truncated — which is the
@@ -110,9 +127,10 @@ export default function register(sdk) {
     // Provider awareness comes from the TUI SDK hook (session.info.provider),
     // never from the configured default or a model-name guess.
     const hasProviderHook = typeof sdk.useSessionProvider === 'function'
-    const providerId = hasProviderHook ? sdk.useSessionProvider() : null
+    const sessionProvider = hasProviderHook ? sdk.useSessionProvider() : null
+    const providerId = probeIdFor(sessionProvider)
     React.useEffect(() => {
-      if (!providerId || !Object.hasOwn(providers, providerId)) return
+      if (!providerId) return
       let alive = true
       const name = providers[providerId]
       const refresh = () => {
@@ -127,8 +145,8 @@ export default function register(sdk) {
       return () => { alive = false; clearInterval(timer) }
     }, [providerId])
     const text = !hasProviderHook ? 'Quota · needs Hermes SDK hook'
-      : !providerId ? 'Quota · provider unavailable'
-        : !Object.hasOwn(providers, providerId) ? `${providerId} · quota unsupported`
+      : !sessionProvider ? 'Quota · provider unavailable'
+        : !providerId ? `${sessionProvider} · quota unsupported`
           : state.provider === providerId ? state.text : `${providers[providerId]} · loading…`
     // One Text per line: the dock is an in-flow flex row, so a second Text in
     // a column Box reserves a real second row instead of being cut off.

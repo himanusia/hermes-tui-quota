@@ -86,5 +86,5 @@ Covers the used→remaining inversion, clamping, pooled accounts taking the most
 
 ## Limits
 
-- Codex, OpenCode Go, and CommandCode only — an unknown provider id renders `<id> · quota unsupported` rather than an invented figure.
+- Codex, OpenCode Go, CommandCode, and the Claude subscription (a `claude-subscription-directsdk-experimental` session is metered as `claude-subscription`; the all-models `weekly` window is the headline, per-model weekly caps stay in the desktop pane) — an unknown provider id renders `<id> · quota unsupported` rather than an invented figure.
 - The probe reads the local credential pool, so a provider you are not authenticated against reads as `not configured`.

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatQuota, interpreterFor, probeIdFor, probeQuota, quotaLines, resetIn } from '../quota.mjs'
+import { formatQuota, interpreterFor, probeIdFor, probeIdForSession, probeQuota, quotaLines, resetIn } from '../quota.mjs'
 
 test('the Hermes venv interpreter wins over HERMES_PYTHON, and clears PYTHONPATH', () => {
   // The TUI exports HERMES_PYTHON as the bare tool interpreter, which has no
@@ -251,6 +251,23 @@ test('the Claude DirectSDK session provider is metered as the Claude subscriptio
   assert.equal(probeIdFor('openai-codex'), 'openai-codex')
   assert.equal(probeIdFor('brand-new'), null)
   assert.equal(probeIdFor(null), null)
+})
+
+test('the native Hermes anthropic provider is metered, never "quota unsupported"', () => {
+  // Provider id `anthropic` is Hermes' built-in Messages route, not the
+  // DirectSDK plugin. A session on it resolved to null and the dock read
+  // "anthropic · quota unsupported" even though the probe could meter the
+  // very same Claude login under `claude-subscription`.
+  assert.equal(probeIdFor('anthropic'), 'anthropic')
+  assert.equal(probeIdForSession({ provider: 'anthropic', baseHost: 'api.anthropic.com' }), 'anthropic')
+  const now = new Date('2026-10-19T09:20:00+07:00').getTime()
+  assert.equal(
+    formatQuota(data([
+      { k: 'session (5h)', pct: 30, reset: '2026-10-19T13:10+07:00' },
+      { k: 'weekly', pct: 34, reset: '2026-10-24T21:00+07:00' }
+    ], 'anthropic'), 'anthropic', now),
+    'Anthropic · 5h 70% left · reset 3h 50m · week 66% left · reset 5d 11h'
+  )
 })
 
 test('Claude headlines the all-models weekly window, not a per-model one', () => {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,7 +9,12 @@ const providers = {
   'openai-codex': 'Codex',
   'opencode-go': 'OpenCode Go',
   commandcode: 'CommandCode',
+  opendesign: 'Open Design',
   'claude-subscription': 'Claude',
+  // Hermes' built-in Anthropic provider (provider id `anthropic`). It resolves
+  // the same Claude Code login the DirectSDK plugin drives, but under its own
+  // credential path, so it is metered by the probe's on-demand `anthropic` entry.
+  anthropic: 'Anthropic',
   'antigravity-subscription': 'Antigravity'
 }
 // Session provider id (session.info.provider) → probe provider id. The Claude
@@ -18,13 +23,90 @@ const providers = {
 const aliases = {
   'claude-subscription-directsdk-experimental': 'claude-subscription',
   'claude-subscription-directsdk': 'claude-subscription',
-  'antigravity-subscription-directsdk': 'antigravity-subscription'
+  'antigravity-subscription-directsdk': 'antigravity-subscription',
+  // Hermes registers the provider as `open-design`; the probe meters it as `opendesign`.
+  'open-design': 'opendesign'
 }
 
 /** The probe id that meters a session provider, or null when unsupported. */
 export function probeIdFor(sessionProvider) {
   const id = aliases[sessionProvider] || sessionProvider
   return id && Object.hasOwn(providers, id) ? id : null
+}
+
+/**
+ * base_url host → probe id, for providers reached through a CUSTOM entry.
+ *
+ * A user-defined provider is billed and logged as `custom` with the endpoint in
+ * `billing_base_url`, so neither the provider id nor the model name can tell
+ * Open Design apart from any other custom endpoint. The host can. Extend this
+ * table when another metered provider is configured as a custom entry.
+ */
+const baseHosts = {
+  'amr-link.open-design.ai': 'opendesign'
+}
+
+function hostOf(url) {
+  try { return new URL(url).host.toLowerCase() } catch { return '' }
+}
+
+/** One read-only handle on state.db, opened on first use. `node:sqlite` ships
+ *  with the TUI's Node; an older runtime just means no session awareness. */
+let sessionDb = null
+
+async function openStateDb() {
+  if (sessionDb) return sessionDb
+  if (!existsSync(join(home, 'state.db'))) return null
+  try {
+    const { DatabaseSync } = await import('node:sqlite')
+    sessionDb = new DatabaseSync(join(home, 'state.db'), { readOnly: true })
+    return sessionDb
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The active session as this TUI knows it: `{ model, provider, baseHost }`.
+ *
+ * `sdk.useSessionProvider` is NOT in every TUI build — the shipping widgetSdk
+ * exposes no session hook at all, so a widget cannot ask which provider it is
+ * metering. What the TUI does publish is the active session id
+ * (`HERMES_TUI_ACTIVE_SESSION_FILE`), and state.db carries that session's
+ * billing identity. One indexed read-only row, so this stays cheap enough to
+ * re-run on every refresh.
+ */
+export async function activeSession(env = process.env) {
+  const file = env.HERMES_TUI_ACTIVE_SESSION_FILE
+  if (!file || !existsSync(file)) return null
+  let id
+  try {
+    id = JSON.parse(readFileSync(file, 'utf8')).session_id
+  } catch {
+    return null
+  }
+  if (!id) return null
+  const db = await openStateDb()
+  if (!db) return null
+  try {
+    const row = db
+      .prepare('select model, billing_provider, billing_base_url from sessions where id = ?')
+      .get(id)
+    if (!row) return null
+    return {
+      model: String(row.model || ''),
+      provider: String(row.billing_provider || ''),
+      baseHost: hostOf(row.billing_base_url || '')
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Which probe meters the active session, from either identity it carries. */
+export function probeIdForSession(session) {
+  if (!session) return null
+  return baseHosts[session.baseHost] || probeIdFor(session.provider)
 }
 const intervalMs = 60_000
 
@@ -99,7 +181,12 @@ export function formatQuota(data, providerId, now = Date.now()) {
     // login is actionable, an empty answer is not. The probe's message leads
     // with its status ("HTTP 429 - …"), so the short form is the part before " - ".
     const reason = accounts.map(row => row.error).find(Boolean)
-    return reason ? `${name} · ${String(reason).split(' - ')[0]}` : `${name} · no quota window`
+    if (reason) return `${name} · ${String(reason).split(' - ')[0]}`
+    // A provider can be unmetered yet configured: Open Design publishes no
+    // usage endpoint, so its only readable fact is the probe's note. Report
+    // that instead of "no quota window", which reads like a broken probe.
+    const note = accounts.flatMap(row => row.notes || []).find(Boolean)
+    return note ? `${name} · ${note}` : `${name} · no quota window`
   }
   // The dock is space-constrained, so it meters ONE account: the live one. The
   // probe flags it (`is_active`) and stamps each row with the pool's verdict, so
@@ -191,11 +278,23 @@ export default function register(sdk) {
   const { Box, defineWidgetApp, h, Text, React } = sdk
   let app
   function Body({ state, t }) {
-    // Provider awareness comes from the TUI SDK hook (session.info.provider),
-    // never from the configured default or a model-name guess.
+    // Prefer the SDK hook when this build ships one; otherwise read the active
+    // session's billing identity (see activeSession). Either way the dock meters
+    // the provider THIS chat calls — never the configured default.
     const hasProviderHook = typeof sdk.useSessionProvider === 'function'
-    const sessionProvider = hasProviderHook ? sdk.useSessionProvider() : null
-    const providerId = probeIdFor(sessionProvider)
+    const hookProvider = hasProviderHook ? sdk.useSessionProvider() : null
+    const [session, setSession] = React.useState(null)
+    React.useEffect(() => {
+      if (hasProviderHook) return
+      let alive = true
+      const load = () => {
+        activeSession().then(next => { if (alive) setSession(next) }, () => {})
+      }
+      load()
+      const timer = setInterval(load, 20_000)
+      return () => { alive = false; clearInterval(timer) }
+    }, [hasProviderHook])
+    const providerId = hasProviderHook ? probeIdFor(hookProvider) : probeIdForSession(session)
     React.useEffect(() => {
       if (!providerId) return
       let alive = true
@@ -211,10 +310,11 @@ export default function register(sdk) {
       const timer = setInterval(refresh, intervalMs)
       return () => { alive = false; clearInterval(timer) }
     }, [providerId])
-    const text = !hasProviderHook ? 'Quota · needs Hermes SDK hook'
-      : !sessionProvider ? 'Quota · provider unavailable'
-        : !providerId ? `${sessionProvider} · quota unsupported`
-          : state.provider === providerId ? state.text : `${providers[providerId]} · loading…`
+    const label = session ? session.baseHost || session.provider : ''
+    const text = providerId ? (state.provider === providerId ? state.text : `${providers[providerId]} · loading…`)
+      : hasProviderHook ? (hookProvider ? `${hookProvider} · quota unsupported` : 'Quota · provider unavailable')
+        : session ? `${label} · quota unsupported`
+          : 'Quota · resolving provider…'
     // One Text per line: the dock is an in-flow flex row, so a second Text in
     // a column Box reserves a real second row instead of being cut off.
     return h(Box, { flexDirection: 'column' }, quotaLines(text).map((line, index) =>
